@@ -1,4 +1,6 @@
 import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
 import java.util.*;
 
 public class Main {
@@ -15,10 +17,15 @@ public class Main {
             indexesSortedList[i] = probabilityAndEvents.get(i).events.get(0);
 
         String[] huffmanCodes = findHuffmanCodes(quantity, probabilityAndEvents);
-        writeHuffmanCodesAndLength(indexesSortedList, huffmanCodes);
+        writeCodesAndLength(indexesSortedList, huffmanCodes, "Хаффмана");
 
-        BigDecimal averageLength =  findAverageLength(huffmanCodes, p);
+        BigDecimal averageLength = findAverageLength(huffmanCodes, p);
+        findRedundancy(averageLength, entropy);
 
+        String[] shannonFanoCode = findShannonFanoCodes(quantity, indexesSortedList, p);
+        writeCodesAndLength(indexesSortedList, shannonFanoCode, "Шеннона-Фано");
+
+        averageLength = findAverageLength(shannonFanoCode, p);
         findRedundancy(averageLength, entropy);
     }
 
@@ -61,10 +68,10 @@ public class Main {
             entropy = entropy.add(probability.multiply(BigDecimal.valueOf(ln / ln2)));
         }
 
-        entropy = entropy.multiply(BigDecimal.valueOf(-1)).stripTrailingZeros();
+        entropy = entropy.negate().stripTrailingZeros();
 
         System.out.println();
-        System.out.println("Энтропия H: " + entropy);
+        System.out.println("Энтропия H: " + entropy + " бит");
 
         return entropy;
     }
@@ -106,26 +113,10 @@ public class Main {
 
             BigDecimal sum = last.probability.add(penultimate.probability);
 
-            ProbabilityAndEvents one;
-            ProbabilityAndEvents zero;
+            addCodeDigit(last, penultimate, huffmanCodes);
 
-            if (((last.events.size() == penultimate.events.size() && last.probability.compareTo(penultimate.probability) > 0) ||
-                    penultimate.events.size() > last.events.size())) {
-                one = penultimate;
-                zero = last;
-            } else {
-                one = last;
-                zero = penultimate;
-            }
-
-            for (int i : one.events)
-                huffmanCodes[i] += "1";
-
-            for (int i : zero.events)
-                huffmanCodes[i] += "0";
-
-            List<Integer> list = new ArrayList<>(zero.events);
-            list.addAll(one.events);
+            List<Integer> list = new ArrayList<>(penultimate.events);
+            list.addAll(last.events);
 
             ProbabilityAndEvents element = new ProbabilityAndEvents(sum, list);
 
@@ -142,12 +133,92 @@ public class Main {
         return huffmanCodes;
     }
 
-    private static void writeHuffmanCodesAndLength(int[] indexesSortedList, String[] huffmanCodes) {
+    private static String[] findShannonFanoCodes(int quantity, int[] indexesSortedList, BigDecimal[] p) {
+        String[] shannonFanoCodes = new String[quantity];
+        Arrays.fill(shannonFanoCodes, "");
+
+        List<Integer> allEvents = new ArrayList<>();
+
+        for (int index : indexesSortedList) {
+            allEvents.add(index);
+        }
+
+        Set<ProbabilityAndEvents> set = new HashSet<>();
+        set.add(new ProbabilityAndEvents(BigDecimal.valueOf(1), allEvents));
+
+        while (set.iterator().hasNext()) {
+            ProbabilityAndEvents current = set.iterator().next();
+            set.remove(current);
+            List<Integer> events = current.events;
+
+            BigDecimal half = current.probability.divide(BigDecimal.valueOf(2), new MathContext(8, RoundingMode.HALF_UP));
+            BigDecimal sum = p[events.get(0)];
+            BigDecimal difference = half.add(sum.negate()).abs().stripTrailingZeros();
+
+            int border = 1;
+            sum = sum.add(p[events.get(border)]).stripTrailingZeros();
+            BigDecimal nextDifference = getDifference(half, sum);
+
+            while (difference.compareTo(nextDifference) >= 0) {
+                difference = nextDifference;
+                border++;
+                sum = sum.add(p[events.get(border)]).stripTrailingZeros();
+                nextDifference = getDifference(half, sum);
+            }
+
+            sum = sum.add(p[events.get(border)].negate()).stripTrailingZeros();
+
+            List<Integer> list = new ArrayList<>();
+            for (int i = 0; i < border; i++)
+                list.add(events.get(i));
+            ProbabilityAndEvents firstPart = new ProbabilityAndEvents(sum, list);
+
+            list = new ArrayList<>();
+            for (int i = border; i < events.size(); i++)
+                list.add(events.get(i));
+            ProbabilityAndEvents secondPart = new ProbabilityAndEvents(current.probability.add(sum.negate()), list);
+
+            addCodeDigit(firstPart, secondPart, shannonFanoCodes);
+
+            if (firstPart.events.size() > 1)
+                set.add(firstPart);
+
+            if (secondPart.events.size() > 1)
+                set.add(secondPart);
+        }
+
+        return shannonFanoCodes;
+    }
+
+    private static BigDecimal getDifference(BigDecimal half, BigDecimal sum) {
+        return half.add(sum.negate()).abs().stripTrailingZeros();
+    }
+
+    private static void addCodeDigit(ProbabilityAndEvents firstPart, ProbabilityAndEvents secondPart, String[] codes) {
+        ProbabilityAndEvents one;
+        ProbabilityAndEvents zero;
+        if ((secondPart.events.size() == firstPart.events.size() && firstPart.probability.compareTo(secondPart.probability) >= 0)
+                || (secondPart.events.size() > firstPart.events.size())) {
+            zero = firstPart;
+            one = secondPart;
+        } else {
+            zero = secondPart;
+            one = firstPart;
+        }
+
+        for (int i : zero.events)
+            codes[i] += "0";
+
+        for (int i : one.events)
+            codes[i] += "1";
+    }
+
+    private static void writeCodesAndLength(int[] indexesSortedList, String[] codes, String name) {
         System.out.println();
-        System.out.println("Код Хаффмана: ");
+        System.out.println("Код " + name + ": ");
         for (int index : indexesSortedList)
-            System.out.println("z_" + (index + 1) + " = " + huffmanCodes[index] + "  L_" + (index + 1) + " = "
-                    + huffmanCodes[index].length());
+            System.out.println("z_" + (index + 1) + " = " + codes[index] + "  L_" + (index + 1) + " = "
+                    + codes[index].length());
     }
 
     private static BigDecimal findAverageLength(String[] codes, BigDecimal[] probabilities) {
@@ -160,24 +231,21 @@ public class Main {
         length = length.stripTrailingZeros();
 
         System.out.println();
-        System.out.println("Средняя длина кода L: " + length);
+        System.out.println("Средняя длина кода L: " + length + " бит");
 
         return length;
     }
 
     private static void findRedundancy(BigDecimal averageLength, BigDecimal entropy) {
-        BigDecimal r = averageLength.add(entropy.multiply(BigDecimal.valueOf(-1)));
-        System.out.println("Избыточность r: " + r.stripTrailingZeros());
+        BigDecimal r = averageLength.add(entropy.negate());
+        System.out.println("Избыточность r: " + r.stripTrailingZeros() + " бит");
     }
 }
 
 //0,208 0,33 0,115 0,115 0,01 0,059 0,037 0,042 0,03 0,054
-//2 2 3 3 6 4 5 4 6 4
 
 //0,279 0,08 0,07 0,055 0,25 0,038 0,11 0,03 0,034 0,054
-//2 4 4 4 2 4 3 5 5 4
 
 //0,049 0,26 0,055 0,025 0,13 0,145 0,028 0,046 0,11 0,152
-//4 2 4 5 3 3 5 4 3 3
 
 //0,147 0,27 0,025 0,1 0,16 0,024 0,028 0,146 0,038 0,062
